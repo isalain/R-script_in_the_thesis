@@ -1,0 +1,311 @@
+Appendix A: NMDS with environmental fit (envfit)
+library(vegan)
+library(ggplot2)
+
+Phyt<-read.table("Phyt.txt", header=T) #a txt table of species per samples
+Environment<-read.table("EnvUntrans.txt", header=T)#Environmental 
+data that are not transformed
+env.log<-log1p(env)#the data of pH should be included.
+group<-read.table("groups.txt", header=T)#a group file showing all groupXsamples. Grouping per season.
+
+Phyt.sqrt<-sqrt(Phyt)
+sol2 <- metaMDS(Phyt.sqrt,"bray")
+NMDS = data.frame(MDS1 = sol2$points[,1], MDS2 = sol2$points[,2])
+ef<-envfit(sol2$points, env.log, perm=1000)
+ef.df<-as.data.frame(ef$vectors$arrows*sqrt(ef$vectors$r))
+ef.df$species<-rownames(ef.df)
+A <- as.list(ef$vectors)
+pvals<-as.data.frame(A$pvals)
+arrows<-as.data.frame(A$arrows*sqrt(A$r))
+C<-cbind(arrows, pvals)
+Cred<-subset(C,pvals<0.001)
+Cred<- cbind(Cred, Species = rownames(Cred))
+phyt_nmds<-ggplot(data = NMDS, aes(MDS1, MDS2)) +
+  geom_point(aes(shape=group$Season, color=Environment$Temp, size=2))+
+  geom_segment(data=Cred,aes(x=0,xend=MDS1,y=0,yend=MDS2),
+  arrow = arrow(length = unit(0.3, "cm" )), size = 0.5,colour="black")
+phyt_nmds + geom_text(data=ef.df,aes(x=MDS1,y=MDS2,label=species),size=5)+coord_fixed()+theme_bw()
+ggsave("phyt_nmds.pdf", width=18, height=18, units="cm")
+#ANOSIM
+Phyt_dist<- vegdist(Phyt.sqrt, "bray")
+attach(group)
+Phyt.ano<- anosim(Phyt_dist, group$Season)
+summary(Phyt.ano)
+
+
+
+Appendix B: AEMs and PCNMs as spatial predictors
+library(AEM)
+library(spacemakeR)
+library(vegan)
+
+E=read.table("Edges.txt",row.names=1,header=T) #Edge matrix
+W_dist=read.table("weight_dist.txt",row.names=1,header=T)#Weighting matrix for distance
+W_dam=read.table("weight_dam.txt",row.names=1,header=T) #Weighting matrix for dams
+Spa=read.table("Spa.txt",row.names=1,header=T) #Geographical coordinates of sites
+#distance based eigenvectors
+W_dist_vect<-runif(ncol(W_dist))
+edge.aem_dist <- aem(binary.mat=as.matrix(E),weight=W_dist_vect)
+dist_vectors <- edge.aem_dist$vectors
+#dam-based eigenvectors
+W_dam_vect<-runif(ncol(W_dam))
+edge.aem_dam <- aem(binary.mat=as.matrix(E),weight=W_dam_vect)
+dam_vectors <- edge.aem_dist$vectors
+moran.I.multi(dam_vectors, W_dam, test.type="parametric")#2 eigenvectors are selected
+moran.I.multi(dist_vectors, W_dist, test.type="parametric")#2 eigenvectors are selected
+#dbMEM vectors
+#use PCNM and pcoa functions developped by Dray et al.2006
+Spa=read.table("Spa.txt",row.names=1,header=T) #Geographical coordinates of sites
+jlr.spa<-(dist(Spa))
+jlr.spa.dbMEM <- PCNM(jlr.spa)
+jlr.spa.dbMEM$Moran_I##three eignevectors are selected (#1,#2,#3)
+dbMEM_vectors<-jlr.spa.dbMEM$vectors
+all_vectors<-data.frame(dist_vectors,dam_vectors,dbMEM_vectors)
+write.csv(all_vectors, "all_vectors.csv")#keep only those with positive and significant Moran's I
+Appendix C: Partial Least Squares Path Modeling (PLS-PM)
+library(plspm)
+
+dry=read.table("dry.txt",row.names=1,header=T) #e.g. PLS-PM for the dry season. Data tables contains only samples from the dry season.
+head(dry)
+Land=c(0,0,0,0,0)
+Phys=c(1,0,0,0,0)
+Nut=c(1,1,0,0,0)
+Phyt=c(1,1,1,0,0)
+Bact=c(1,1,1,1,0)
+path_mat=rbind(Land,Phys,Nut,Phyt,Bact)
+innerplot(path_mat)
+blocks=list(1:4,5:13,14:17,18,19)
+modes=c("A","A","A","A","A")
+sat_pls=plspm(dry, path_mat, blocks, modes=modes)
+summary(sat_pls)
+plot(sat_pls, arr.pos = 0.35)
+Paths= sat_pls$path_coefs
+arrow_lwd = 10*round(Paths, 2)
+plot(sat_pls, arr.pos = 0.35, arr.lwd = arrow_lwd)
+Appendix D: Raup-Crick coefficients
+#The RC function should be downloaded and run. This function used for raup-crick coefficient is from M. Chase, Jonathan; J. B. Kraft, Nathan; G. Smith, Kevin; Vellend, Mark; Inouye, Brian D (2016): Using null models to disentangle variation in community dissimilarity from variation in??-diversity.
+
+#e.g.; raup-crick for Bacillariophyta.
+ bacil_dry=read.table("Bacillariophyta_dry.txt",row.names=1,header=T)# A table of species belonging to phyla Bacillariophyta in the wet season
+w<-raup_crick(bacil_wet)
+bac_wet<-as.vector(w)
+#Writing the results
+rc_results<-data.frame(bac_wet)
+write.csv(rc_results, "rc_results_bact_wet.csv" )
+
+Appendix E: SourceTracker
+
+# the function for SourceTracker package can be accessed at  https://sourceforge.net/projects/sourcetracker/ 
+#load sample metadata
+metadata <- read.table('metadata.txt',sep='\t',h=T,row.names=1,check=F,comment='')# a table showing samples from the source and samples from the sink.
+
+# load OTU table
+otus <- read.table('otus.txt',sep='\t', header=T,row.names=1,check=F,skip=1,comment='')
+otus <- t(as.matrix(otus))
+
+# extract only those samples in common between the two tables
+common.sample.ids <- intersect(rownames(metadata), rownames(otus))
+otus <- otus[common.sample.ids,]
+metadata <- metadata[common.sample.ids,]
+# double-check that the mapping file and otu table
+# had overlapping samples
+if(length(common.sample.ids) <= 1) {
+  message <- paste(sprintf('Error: there are %d sample ids in common '),
+                   'between the metadata file and data table')
+  stop(message)
+}
+
+# extract the source environments and source/sink indices
+train.ix <- which(metadata$SourceSink=='source')
+test.ix <- which(metadata$SourceSink=='sink')
+envs <- metadata$Env
+if(is.element('Description',colnames(metadata))) desc <- metadata$Description
+
+# load SourceTracker package
+source('SourceTracker.r')
+
+# tune the alpha values using cross-validation (this is slow!)
+# tune.results <- tune.st(otus[train.ix,], envs[train.ix])
+# alpha1 <- tune.results$best.alpha1
+# alpha2 <- tune.results$best.alpha2
+# note: to skip tuning, run this instead:
+alpha1 <- alpha2 <- 0.001
+
+# train SourceTracker object on training data
+st <- sourcetracker(otus[train.ix,], envs[train.ix])
+
+# Estimate source proportions in test data
+results <- predict(st,otus[test.ix,], alpha1=alpha1, alpha2=alpha2)
+
+# Estimate leave-one-out source proportions in training data 
+results.train <- predict(st, alpha1=alpha1, alpha2=alpha2)
+
+# plot results with legend
+plot(results, labels[test.ix], type='pie', include.legend=TRUE, env.colors=c('#47697E','#5B7444','#CC6666','#79BEDB','#885588')) 
+
+Appendix F: Modelling SpADs 
+library(diptest)
+library(fitdistrplus)
+otusl=read.table("16S_otu_table.txt")#load the OTUs
+otusl=t(otusl)
+
+# Create a dataframe with statistics per OTU
+all(colnames(otusl)==colnames(stats_sk))
+stats_sk=matrix(0,10,ncol(otusl))
+colnames(stats_sk)=colnames(otusl)
+stats_sk<-as.data.frame(stats_sk)
+distmod<-matrix(0,5)
+newnames<-c("normal","weibull","gamma", "lnormal", "logistic")
+rownames(distmod)<-newnames
+row.names(stats_sk)[1]<-"min"
+row.names(stats_sk)[2]<-"max"
+row.names(stats_sk)[3]<-"median"
+row.names(stats_sk)[4]<-"mean"
+row.names(stats_sk)[5]<-"sd"
+row.names(stats_sk)[6]<-"skew"
+row.names(stats_sk)[7]<-"kurt"
+row.names(stats_sk)[8]<-"dist"
+row.names(stats_sk)[9]<-"meandist"
+row.names(stats_sk)[10]<-"sddist"
+for(i in 1:ncol(otusl)){
+  (colnames(otusl)[i])
+  m=1
+  j=1
+  print(paste("i:",i))
+  # dist=1
+  t=j+1
+  
+  #print(paste("j:",j))
+  m=m+1
+  
+  #print(paste("k:",k))
+  dist=descdist(log10(otusl[,i]+5), boot = 1000, graph = FALSE)
+  diptest<-dip.test(log10(otusl[,i]+5), simulate.p.value = FALSE, B = 2000)
+  normal<-try(fitdist(log10(otusl[,i]+5), "norm"))
+  if(inherits( normal, "try-error"))
+  {#error handling code, maybe just skip this iteration using
+    normal$aic=NA
+  }
+  weibull <-try(fitdist(log10(otusl[,i]+5), "weibull"))
+  if(inherits( weibull, "try-error"))
+  {
+    #error handling code, maybe just skip this iteration using
+    weibull$aic=NA}
+  
+  gamma <- try(fitdist(log10(otusl[,i]+5), "gamma"))
+  if(inherits( gamma, "try-error"))
+  {#error handling code, maybe just skip this iteration using
+    gamma$aic=NA}
+  
+  lnormal <- try(fitdist(log10(otusl[,i]+5), "lnorm"))
+  if(inherits( lnormal, "try-error"))
+  {#error handling code, maybe just skip this iteration using
+    lnormal$aic=NA}
+  
+  logistic <- try(fitdist(log10(otusl[,i]+5), "logis"))
+  if(inherits( logistic, "try-error"))
+  {#error handling code, maybe just skip this iteration using
+    logistic$aic=NA}
+  
+  distmod[1,]= normal$aic
+  distmod[2,]= weibull$aic
+  distmod[3,]= gamma$aic
+  distmod[4,]= lnormal$aic
+  distmod[5,]= logistic$aic
+  AICmin = rownames(which(distmod == min(distmod, na.rm=TRUE), arr.ind=TRUE))
+  parameters<-paste(as.name(AICmin),"$estimate", sep="")
+  eval(parse(text=parameters))
+  parameters<-as.matrix(eval(parse(text=parameters)))
+  m=m+1
+  #otuss.relsa[1,i]=mean(dist)
+  stats_sk[1,i]=dist$min
+  stats_sk[2,i]=dist$max
+  stats_sk[3,i]=dist$median
+  stats_sk[4,i]=dist$mean
+  stats_sk[5,i]=dist$sd
+  stats_sk[6,i]=dist$skew
+  stats_sk[7,i]=dist$kurt
+  
+  if (diptest$p.value < 0.01){
+    stats_sk[8,i]= print("bimodal")
+  } else {
+    stats_sk[8,i]=print(AICmin)}
+  stats_sk[9,i]=parameters[1,1]
+  stats_sk[10,i]=parameters[2,1]
+} 
+results=t(stats_sk)
+write.csv(results, "results.csv")
+
+
+Appendix G: Neutral community model
+source('sncm.fit.R') #this function can be downloaded from https://rdrr.io/github/DanielSprockett/reltools/src/R/modeling_tools.R and be saved in the working directory
+spp<-read.delim('spp.txt',head=T,stringsAsFactors=F,row.names=1) # a table containing otus without corresponding taxonomies
+taxon<-read.delim("taxon.txt",row.names=1,header=T,stringsAsFactors=F)# a table of taxonomies
+
+library(minpack.lm)
+library(Hmisc)
+library(stats4)
+sncm.fit(spp=spp, taxon=taxon)->kan
+sncm.fit(spp=spp, taxon=taxon,stats=F)->kan2
+kan2[grep('^OTU',row.names(kan2)),match('Kingdom',names(kan2)):ncol(kan2)]->kk
+apply(kk,2,function(xxx) sum(is.na(xxx)))  
+kan2[grep('^OTU',row.names(kan2)),0-match('Kindom',names(kan2)):ncol(kan2)]->kk
+
+head(kk)
+save(kk,file='kk.RData')
+load('kk.RData')
+inter.col<-rep('black',nrow(kk))
+inter.col[kk$freq <= kk$pred.lwr]<-'#A52A2A'
+inter.col[kk$freq >= kk$pred.upr]<-'#29A6A6'
+library(grid)
+grid.newpage()
+pushViewport(viewport(h=0.8,w=0.8))
+pushViewport(dataViewport(xData=range(log10(kk$p)), yData=c(0,1.02),extension=c(0.02,0)))
+grid.rect()
+grid.points(log10(kk$p), kk$freq,pch=20,gp=gpar(col=inter.col,cex=0.7))  
+grid.yaxis()
+grid.xaxis()
+grid.lines(log10(kk$p),kk$freq.pred,gp=gpar(col='blue',lwd=3),default='native')  
+grid.lines(log10(kk$p),kk$pred.lwr ,gp=gpar(col='blue',lwd=3,lty=2),default='native')  
+grid.lines(log10(kk$p),kk$pred.upr,gp=gpar(col='blue',lwd=3,lty=2),default='native') 
+grid.text(y=unit(0,'npc')-unit(2,'lines'),label='log10(p)', gp=gpar(fontface=4)) log10(p)
+grid.text(x=unit(0,'npc')-unit(3,'lines'),label='Frequency',gp=gpar(fontface=2),rot=90) 
+
+N <- mean(apply(spp, 1, sum))
+
+p.m <- apply(spp, 2, mean)
+p.m <- p.m[p.m != 0]
+p <- p.m/N
+
+spp.bi <- 1*(spp>0)
+freq <- apply(spp.bi, 2, mean)
+freq <- freq[freq != 0]
+
+
+C <- merge(p, freq, by=0)
+C <- C[order(C[,2]),]
+C <- as.data.frame(C)
+C.0 <- C[!(apply(C, 1, function(y) any(y == 0))),] 
+p <- C.0[,2]
+freq <- C.0[,3]
+names(p) <- C.0[,1]
+names(freq) <- C.0[,1]
+
+d = 1/N
+
+##Fit model parameter m (or Nm) using Non-linear least squares (NLS) 
+m.fit <- nlsLM(freq ~ pbeta(d, N*m*p, N*m*(1-p), lower.tail=FALSE), start=list(m=0.1))
+m.ci <- confint(m.fit, 'm', level=0.95)
+
+##Fit neutral model parameter m (or Nm) using Maximum likelihood estimation (MLE) 
+sncm.LL <- function(m, sigma){
+R = freq - pbeta(d, N*m*p, N*m*(1-p), lower.tail=FALSE)
+R = dnorm(R, 0, sigma)
+-sum(log(R))
+}
+m.mle <- mle(sncm.LL, start=list(m=0.1, sigma=0.1), nobs=length(p))
+
+freq.pred <- pbeta(d, N*coef(m.fit)*p, N*coef(m.fit)*(1-p), lower.tail=FALSE)
+Rsqr <- 1 - (sum((freq - freq.pred)^2))/(sum((freq - mean(freq))^2))
+Rsqr
+
